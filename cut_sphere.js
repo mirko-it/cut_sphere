@@ -12,55 +12,51 @@ app.init = function() {
 	app.data.pieces = 5;
 	app.data.diameter = 20;
 
+	app.graph.init();
+
+	app.process();
+
+};
+
+
+app.graph.init = function() {
+
 	app.graph.canvas = document.createElement('canvas');
-	app.graph.canvas.position = 'absolute';
-	app.graph.ctx = app.graph.canvas.getContext('2d');
 	document.body.appendChild(app.graph.canvas);
+	app.graph.canvas.position = 'absolute';
 	app.graph.canvas.width = app.graph.canvas.clientWidth;
 	app.graph.canvas.height = app.graph.canvas.clientHeight;
-	app.graph.reference = Math.min(app.graph.canvas.width, app.graph.canvas.height);
 
+	app.graph.ctx = app.graph.canvas.getContext('2d');
 	app.graph.ctx.fillStyle = "white";
 	app.graph.ctx.strokeStyle = "black";
 	app.graph.ctx.lineWidth = 1;
 
+	app.graph.reference = Math.min(app.graph.canvas.width, app.graph.canvas.height);
 	app.graph.center = { x: (app.graph.canvas.width / 2), y: (app.graph.canvas.height / 2) }; // { x: 400, y: 300 }
 	app.graph.radius = (app.graph.reference / 3); // 200
 	app.graph.slicesGapMax = app.graph.reference / 15; // 40
 	app.graph.slicesLineDash = [(app.graph.reference / 120), (app.graph.reference / 60)]; // [5, 10]
 	app.graph.slicesRadiusFactorMax = 0.06; // 0.05 // 0.00 to 0.10
 	app.graph.slicesDottedLineWidth = 0.1; // 0.4
-	app.graph.limitToCut = false;
-	app.graph.slicesGap = app.graph.slicesGapMax;
 	app.graph.fontSize = parseInt(app.graph.reference * 0.025);
-	app.graph.animation = true;
-//app.graph.animation = false;
+	app.graph.flagAnimation = true;
+//app.graph.flagAnimation = false;
 	app.graph.flag3d = true;
 //app.graph.flag3d = false;
-	app.graph.slicesRadiusFactor = (app.graph.flag3d ? app.graph.slicesRadiusFactorMax : 0);
+	app.graph.currentAnimation = null;
 
-	$("#controls input.pieces").val(app.data.pieces);
-	$("#controls input.diameter").val(app.data.diameter);
-	$("#controls input.animation").prop('checked', app.graph.animation);
-	$("#controls input.3d").prop('checked', app.graph.flag3d);
+	app.graph.resetAnimationValues();
+
+	app.graph.refreshControls();
 
 	$("#controls input").on("change", e => {
-		app.stopAnimation();
+		app.graph.stopAnimation();
 		if (!e || !e.target || !$(e.target)) return;
 		let elem = $(e.target);
-
-		if (elem.hasClass('pieces')) app.data.pieces = parseInt(elem.val());
-		if (elem.hasClass('diameter')) app.data.diameter = parseInt(elem.val());
-		if (elem.hasClass('animation')) app.graph.animation = elem.prop('checked');
-		if (elem.hasClass('3d')) app.graph.flag3d = elem.prop('checked');
-
-		app.graph.slicesRadiusFactor = (app.graph.flag3d ? app.graph.slicesRadiusFactorMax : 0);
-
+		app.graph.readControls(elem);
 		app.process();
 	});
-
-
-	app.process();
 
 };
 
@@ -69,47 +65,91 @@ app.process = function() {
 
 	app.start();
 
-	if (app.graph.animation) {
-		/* */
-		app.graph.slicesGap = 0;
-		app.graph.slicesRadiusFactor = 0;
-		app.graph.limitToCut = -1;
-		app.graph.drawCircle = true;
-		app.draw();
-
-		let step = 0;
-		app.graph.timerDrawAnim = setInterval(() => {
-			app.graph.limitToCut = (step - 1);
-			app.draw();
-			step++;
-			if (step > (app.cuts.length + 1)) {
-				app.stopAnimation();
-				step = 0;
-				app.graph.timerDrawAnim = setInterval(() => {
-					app.graph.slicesGap = (step / 100) * app.graph.slicesGapMax;
-					app.graph.slicesRadiusFactor = ((step < 60) ? 0 : ((step - 60) / 40)) * (app.graph.flag3d ? app.graph.slicesRadiusFactorMax : 0);
-					app.graph.limitToCut = false;
-					app.graph.drawCircle = false;
-					app.draw();
-					step++;
-					if (step > 100) app.stopAnimation();
-				}, 10);
-			}
-		}, 200);
-		/* */
+	if (app.graph.flagAnimation) {
+		app.graph.startAnimation();
 	} else {
-		app.draw();
+		app.graph.draw();
 	}
 
 };
 
 
-app.stopAnimation = function() {
-	clearInterval(app.graph.timerDrawAnim)
+app.graph.startAnimation = function() {
+
+	new Animation({
+
+		steps: (app.cuts.length + 1),
+		duration: 1000,
+		funcDraw: app.graph.draw,
+		funcBefore: (step, anim) => {
+			app.graph.currentAnimation = anim;
+			app.graph.slicesGap = 0;
+			app.graph.slicesRadiusFactor = 0;
+			app.graph.limitToCut = -1;
+			app.graph.flagDrawCircle = true;
+		},
+		funcFrame: (step) => {
+			app.graph.limitToCut = (step - 1);
+		},
+
+	}).start()
+	.then(new Animation({
+
+		steps: 200,
+		duration: 1000,
+		funcDraw: app.graph.draw,
+		funcBefore: (step, anim) => {
+			app.graph.currentAnimation = anim;
+		},
+		funcFrame: (step, anim) => {
+			app.graph.slicesGap = ((step * app.graph.slicesGapMax) / anim.steps);
+			app.graph.slicesRadiusFactor = ((step < (anim.steps * .6)) ? 0 : ((step - (anim.steps * .6)) / (anim.steps * .4))) * (app.graph.flag3d ? app.graph.slicesRadiusFactorMax : 0);
+			app.graph.limitToCut = false;
+			app.graph.flagDrawCircle = false;
+		},
+
+	}).start)
+	.then(() => {
+		app.graph.resetAnimationValues();
+	});
+
+};
+
+
+app.graph.stopAnimation = function() {
+	if (app.graph.currentAnimation) app.graph.currentAnimation.stop();
+	app.graph.resetAnimationValues();
+};
+
+
+app.graph.resetAnimationValues = function() {
 	app.graph.slicesGap = app.graph.slicesGapMax;
 	app.graph.slicesRadiusFactor = (app.graph.flag3d ? app.graph.slicesRadiusFactorMax : 0);
 	app.graph.limitToCut = false;
-	app.graph.drawCircle = false;
+	app.graph.flagDrawCircle = false;
+};
+
+
+app.graph.refreshControls = function() {
+	$("#controls input.pieces").val(app.data.pieces);
+	$("#controls input.diameter").val(app.data.diameter);
+	$("#controls input.animation").prop('checked', app.graph.flagAnimation);
+	$("#controls input.3d").prop('checked', app.graph.flag3d);
+};
+
+app.graph.readControls = function(elem) {
+	if (elem.hasClass('pieces')) app.data.pieces = parseInt(elem.val());
+	if (elem.hasClass('diameter')) app.data.diameter = parseInt(elem.val());
+	if (elem.hasClass('animation')) app.graph.flagAnimation = elem.prop('checked');
+	if (elem.hasClass('3d')) app.graph.flag3d = elem.prop('checked');
+
+	if (app.data.pieces < 1) app.data.pieces = 1;
+	if (app.data.pieces > 100) app.data.pieces = 100;
+	if (app.data.diameter < 1) app.data.diameter = 1;
+	if (app.data.diameter > 10000) app.data.diameter = 10000;
+	app.graph.slicesRadiusFactor = (app.graph.flag3d ? app.graph.slicesRadiusFactorMax : 0);
+
+	app.graph.refreshControls();
 };
 
 
@@ -154,19 +194,19 @@ app.start = function() {
 }
 
 
-app.draw = function() {
+app.graph.draw = function() {
 	//fb("########## draw ##########");
 
 	app.graph.ctx.clearRect(0, 0, app.graph.canvas.width, app.graph.canvas.height);
 	app.graph.ctx.fillRect(0, 0, app.graph.canvas.width, app.graph.canvas.height);
-	//app.drawCircle(app.graph.center, app.graph.radius, { color: "gray" });
-	if (app.graph.drawCircle) app.drawCircle(app.graph.center, app.graph.radius);
+	//app.graph.drawCircle(app.graph.center, app.graph.radius, { color: "gray" });
+	if (app.graph.flagDrawCircle) app.graph.drawCircle(app.graph.center, app.graph.radius);
 
 	app.graph.factor = app.graph.radius / app.data.radius;
 	//fb("factor", round_two_digit(app.graph.factor));
 
 	if (!app.cuts.length) {
-		app.drawCircle(app.graph.center, app.graph.radius);
+		app.graph.drawCircle(app.graph.center, app.graph.radius);
 		return;
 	}
 	if (app.graph.limitToCut === -1) return;
@@ -185,35 +225,33 @@ app.draw = function() {
 		//fb("angle", round_two_digit(angle));
 
 		if (i == 0) {
-			app.drawCircle(app.pointAdd(app.pointCopy(app.graph.center), { x: shiftX }), app.graph.radius, { start: -angle, stop: angle, closePath: false });
+			app.graph.drawCircle(app.graph.pointAdd(app.graph.pointCopy(app.graph.center), { x: shiftX }), app.graph.radius, { start: -angle, stop: angle, closePath: false });
 		} else {
-			pointOnCircle = app.getPointOnCircle(app.graph.center, app.graph.radius, -lastAngle);
-			if (app.graph.slicesRadiusFactor && app.graph.slicesDottedLineWidth) app.drawEllipse((pointOnCircle.x + shiftX), app.graph.center.y, (app.graph.radius * app.graph.slicesRadiusFactor), lastCapRadius * app.graph.factor, { start: Math.PI / 2, stop: -Math.PI / 2, closePath: false, lineDash: app.graph.slicesLineDash, lineWidth: app.graph.slicesDottedLineWidth });
-			app.drawEllipse((pointOnCircle.x + shiftX), app.graph.center.y, (app.graph.radius * app.graph.slicesRadiusFactor), lastCapRadius * app.graph.factor, { start: -Math.PI / 2, stop: Math.PI / 2, closePath: false });
-			app.drawCircle(app.pointAdd(app.pointCopy(app.graph.center), { x: shiftX }), app.graph.radius, { start: -angle, stop: -lastAngle, closePath: false });
-			app.drawCircle(app.pointAdd(app.pointCopy(app.graph.center), { x: shiftX }), app.graph.radius, { start: lastAngle, stop: angle, closePath: false });
+			pointOnCircle = app.graph.getPointOnCircle(app.graph.center, app.graph.radius, -lastAngle);
+			if (app.graph.slicesRadiusFactor && app.graph.slicesDottedLineWidth) app.graph.drawEllipse((pointOnCircle.x + shiftX), app.graph.center.y, (app.graph.radius * app.graph.slicesRadiusFactor), lastCapRadius * app.graph.factor, { start: Math.PI / 2, stop: -Math.PI / 2, closePath: false, lineDash: app.graph.slicesLineDash, lineWidth: app.graph.slicesDottedLineWidth });
+			app.graph.drawEllipse((pointOnCircle.x + shiftX), app.graph.center.y, (app.graph.radius * app.graph.slicesRadiusFactor), lastCapRadius * app.graph.factor, { start: -Math.PI / 2, stop: Math.PI / 2, closePath: false });
+			app.graph.drawCircle(app.graph.pointAdd(app.graph.pointCopy(app.graph.center), { x: shiftX }), app.graph.radius, { start: -angle, stop: -lastAngle, closePath: false });
+			app.graph.drawCircle(app.graph.pointAdd(app.graph.pointCopy(app.graph.center), { x: shiftX }), app.graph.radius, { start: lastAngle, stop: angle, closePath: false });
 		}
 
-		pointOnCircle = app.getPointOnCircle(app.graph.center, app.graph.radius, -angle);
-		app.drawEllipse((pointOnCircle.x + shiftX), app.graph.center.y, (app.graph.radius * app.graph.slicesRadiusFactor), cap_radius * app.graph.factor);
+		pointOnCircle = app.graph.getPointOnCircle(app.graph.center, app.graph.radius, -angle);
+		app.graph.drawEllipse((pointOnCircle.x + shiftX), app.graph.center.y, (app.graph.radius * app.graph.slicesRadiusFactor), cap_radius * app.graph.factor);
 
 		if (i == (app.cuts.length - 1)) {
-			if (app.graph.slicesRadiusFactor && app.graph.slicesDottedLineWidth) app.drawEllipse((pointOnCircle.x + shiftX - app.graph.slicesGap), app.graph.center.y, (app.graph.radius * app.graph.slicesRadiusFactor), cap_radius * app.graph.factor, { start: Math.PI / 2, stop: -Math.PI / 2, closePath: false, lineDash: app.graph.slicesLineDash, lineWidth: app.graph.slicesDottedLineWidth });
-			app.drawEllipse((pointOnCircle.x + shiftX - app.graph.slicesGap), app.graph.center.y, (app.graph.radius * app.graph.slicesRadiusFactor), cap_radius * app.graph.factor, { start: -Math.PI / 2, stop: Math.PI / 2, closePath: false });
-			app.drawCircle(app.pointAdd(app.pointCopy(app.graph.center), { x: (shiftX - app.graph.slicesGap) }), app.graph.radius, { start: angle, stop: -angle, closePath: false });
+			if (app.graph.slicesRadiusFactor && app.graph.slicesDottedLineWidth) app.graph.drawEllipse((pointOnCircle.x + shiftX - app.graph.slicesGap), app.graph.center.y, (app.graph.radius * app.graph.slicesRadiusFactor), cap_radius * app.graph.factor, { start: Math.PI / 2, stop: -Math.PI / 2, closePath: false, lineDash: app.graph.slicesLineDash, lineWidth: app.graph.slicesDottedLineWidth });
+			app.graph.drawEllipse((pointOnCircle.x + shiftX - app.graph.slicesGap), app.graph.center.y, (app.graph.radius * app.graph.slicesRadiusFactor), cap_radius * app.graph.factor, { start: -Math.PI / 2, stop: Math.PI / 2, closePath: false });
+			app.graph.drawCircle(app.graph.pointAdd(app.graph.pointCopy(app.graph.center), { x: (shiftX - app.graph.slicesGap) }), app.graph.radius, { start: angle, stop: -angle, closePath: false });
 		}
 
-		/* */
 		cutCenterX = (app.graph.center.x + app.graph.radius + shiftX - (app.graph.slicesGap / 2) - height * app.graph.factor);
 		sliceCenterX = (lastSliceStartX + (app.graph.center.x + app.graph.radius + shiftX - height * app.graph.factor)) / 2;
-		//app.drawPoint(cutCenterX, (app.graph.center.y - app.graph.radius * 1.1));
-		//app.drawPoint(sliceCenterX, (app.graph.center.y + app.graph.radius * 1.1), { color: "red" });
-		let pos = app.drawText(cutCenterX, (app.graph.center.y - app.graph.radius * 1.1), ("@" + app.cuts[app.cuts.length - 1 - i].toFixed(2)), { fontSize: app.graph.fontSize, center: true, fillStyle: "lightgray" })
-		app.drawText(pos, ("@" + parseInt(app.cuts[app.cuts.length - 1 - i])), { fontSize: app.graph.fontSize })
-		pos = app.drawText(sliceCenterX, (app.graph.center.y + app.graph.radius * 1.1), (round_two_digit(height - lastHeight).toFixed(2)), { fontSize: app.graph.fontSize, center: true, fillStyle: "lightgray" })
-		app.drawText(pos, (parseInt(round_two_digit(height - lastHeight))), { fontSize: app.graph.fontSize })
+		//app.graph.drawPoint(cutCenterX, (app.graph.center.y - app.graph.radius * 1.1));
+		//app.graph.drawPoint(sliceCenterX, (app.graph.center.y + app.graph.radius * 1.1), { color: "red" });
+		let pos = app.graph.drawText(cutCenterX, (app.graph.center.y - app.graph.radius * 1.1), ("@" + app.cuts[app.cuts.length - 1 - i].toFixed(2)), { fontSize: app.graph.fontSize, center: true, fillStyle: "lightgray" })
+		app.graph.drawText(pos, ("@" + parseInt(app.cuts[app.cuts.length - 1 - i])), { fontSize: app.graph.fontSize })
+		pos = app.graph.drawText(sliceCenterX, (app.graph.center.y + app.graph.radius * 1.1), (round_two_digit(height - lastHeight).toFixed(2)), { fontSize: app.graph.fontSize, center: true, fillStyle: "lightgray" })
+		app.graph.drawText(pos, (parseInt(round_two_digit(height - lastHeight))), { fontSize: app.graph.fontSize })
 		lastSliceStartX = app.graph.center.x + app.graph.radius + shiftX - app.graph.slicesGap - height * app.graph.factor;
-		/* */
 
 		shiftX -= app.graph.slicesGap;
 		lastHeight = height;
@@ -223,26 +261,24 @@ app.draw = function() {
 		if (app.graph.limitToCut === i) break;
 	}
 
-	/* */
 	sliceCenterX = (lastSliceStartX + (app.graph.center.x - app.graph.radius + shiftX)) / 2;
-	//app.drawPoint(sliceCenterX, (app.graph.center.y + app.graph.radius * 1.1), { color: "red" });
-	let pos = app.drawText(sliceCenterX, (app.graph.center.y + app.graph.radius * 1.1), ((app.data.diameter - lastHeight).toFixed(2)), { fontSize: app.graph.fontSize, center: true, fillStyle: "lightgray" })
-	app.drawText(pos, (parseInt((app.data.diameter - lastHeight))), { fontSize: app.graph.fontSize })
-	/* */
+	//app.graph.drawPoint(sliceCenterX, (app.graph.center.y + app.graph.radius * 1.1), { color: "red" });
+	let pos = app.graph.drawText(sliceCenterX, (app.graph.center.y + app.graph.radius * 1.1), ((app.data.diameter - lastHeight).toFixed(2)), { fontSize: app.graph.fontSize, center: true, fillStyle: "lightgray" })
+	app.graph.drawText(pos, (parseInt((app.data.diameter - lastHeight))), { fontSize: app.graph.fontSize })
 
 };
 
 
 
-app.save = function() {
+app.graph.save = function() {
 	app.graph.ctx.save();
 }
 
-app.restore = function() {
+app.graph.restore = function() {
 	app.graph.ctx.restore();
 }
 
-app.drawLine = function(x1, y1, x2, y2, args) {
+app.graph.drawLine = function(x1, y1, x2, y2, args) {
 	if (typeof (x1) == 'object') args = x2, y2 = y1.y, x2 = y1.x, y1 = x1.y, x1 = x1.x;
 	args = args || {};
 	app.graph.ctx.save();
@@ -256,7 +292,7 @@ app.drawLine = function(x1, y1, x2, y2, args) {
 	app.graph.ctx.restore();
 }
 
-app.drawCircle = function(x, y, radius, args) {
+app.graph.drawCircle = function(x, y, radius, args) {
 	if (typeof (x) == 'object') args = radius, radius = y, y = x.y, x = x.x;
 	args = args || {};
 	app.graph.ctx.save();
@@ -269,7 +305,7 @@ app.drawCircle = function(x, y, radius, args) {
 	app.graph.ctx.restore();
 }
 
-app.drawEllipse = function(x, y, radiusX, radiusY, args) {
+app.graph.drawEllipse = function(x, y, radiusX, radiusY, args) {
 	if (typeof (x) == 'object') args = radiusY, radiusY = radiusX, radiusX = y, y = x.y, x = x.x;
 	args = args || {};
 	app.graph.ctx.save();
@@ -284,7 +320,7 @@ app.drawEllipse = function(x, y, radiusX, radiusY, args) {
 	app.graph.ctx.restore();
 }
 
-app.drawPoint = function(x, y, args) {
+app.graph.drawPoint = function(x, y, args) {
 	if (typeof (x) == 'object') args = y, y = x.y, x = x.x;
 	args = args || {};
 	app.graph.ctx.save();
@@ -296,7 +332,7 @@ app.drawPoint = function(x, y, args) {
 	app.graph.ctx.restore();
 }
 
-app.drawText = function(x, y, text, args) {
+app.graph.drawText = function(x, y, text, args) {
 	if (typeof (x) == 'object') args = text, text = y, y = x.y, x = x.x;
 	args = args || {};
 	app.graph.ctx.save();
@@ -317,26 +353,26 @@ app.drawText = function(x, y, text, args) {
 }
 
 
-app.drawPointOnCircle = function(center, radius, angle, args) {
-	app.drawPoint(app.getPointOnCircle(center, radius, angle), args);
+app.graph.drawPointOnCircle = function(center, radius, angle, args) {
+	app.graph.drawPoint(app.graph.getPointOnCircle(center, radius, angle), args);
 }
 
-app.getPointOnCircle = function(center, radius, angle) {
+app.graph.getPointOnCircle = function(center, radius, angle) {
 	return { x: (center.x + Math.cos(angle) * radius), y: (center.y + Math.sin(angle) * radius) };
 }
 
 
-app.pointAdd = function(point, pointToAdd) {
+app.graph.pointAdd = function(point, pointToAdd) {
 	point.x = ((point.x || 0) + (pointToAdd.x || 0));
 	point.y = ((point.y || 0) + (pointToAdd.y || 0));
 	return point;
 }
 
-app.pointCopy = function(point) {
+app.graph.pointCopy = function(point) {
 	return { x: point.x, y: point.y };
 }
 
-app.pointCombine = function(point, point2, factorX, factorY) {
+app.graph.pointCombine = function(point, point2, factorX, factorY) {
 	factorX = ((typeof (factorX) == "undefined") ? 1 : factorX);
 	factorY = ((typeof (factorY) == "undefined") ? 1 : factorY);
 	point.x = ((point.x || 0) + ((point2.x || 0) * factorX));
@@ -366,6 +402,49 @@ let spherical_cap_radius = (radius, height) => {
 
 let round_two_digit = num => {
 	return Math.round((num + Number.EPSILON) * 100) / 100;
+}
+
+
+
+function Animation(args) {
+	if (!(this instanceof Animation)) {
+		return new Animation(args);
+	}
+
+	this.args = args;
+
+	this.steps = args.steps || 0;
+	this.duration = args.duration || 0;
+	this.fps = args.fps || 0;
+
+	this.funcDraw = null;
+	this.funcBefore = null;
+	this.funcFrame = null;
+	this.timerLoop = null;
+
+	this.start = () => {
+		return new Promise(resolve => {
+			let frameDelay = parseInt(this.duration / this.steps), step = 0;
+
+			if (typeof(this.args.funcBefore) == "function") this.args.funcBefore(step, this);
+			if (typeof(this.args.funcDraw) == "function") this.args.funcDraw();
+
+			let funcLoop = () => {
+				if (typeof(this.args.funcFrame) == "function") this.args.funcFrame(step, this);
+				if (typeof(this.args.funcDraw) == "function") this.args.funcDraw();
+				step++;
+				if (step > this.steps) return resolve();
+				this.timerLoop = setTimeout(funcLoop, frameDelay);
+			}
+
+			funcLoop();
+		});
+	}
+
+	this.stop = () => {
+		clearTimeout(this.timerLoop)
+	}
+
 }
 
 
